@@ -1184,25 +1184,22 @@ function unblockChildrenUpdate (schema: string): string {
 }
 
 export function completeJobs (schema: string, table: string, includeQueued?: boolean) {
+  const stateFilter = includeQueued
+    ? `state < '${JOB_STATES.completed}'`
+    : `state = '${JOB_STATES.active}'`
+
   return `
-    WITH completed AS (
-      ${completeJobsUpdate(schema, table, includeQueued)}
-      RETURNING name, id, blocking
-    ),
-    decremented AS (
-      SELECT d.child_name, d.child_id, COUNT(*)::int AS n
-      FROM ${schema}.job_dependency d
-      JOIN completed c ON c.blocking
-        AND d.parent_name = c.name
-        AND d.parent_id = c.id
-      GROUP BY d.child_name, d.child_id
-    ),
-    ${lockedChildrenCte(schema)},
-    unblocked AS (
-      ${unblockChildrenUpdate(schema)}
-      RETURNING 1
+    WITH results AS (
+      UPDATE ${schema}.${table}
+      SET completed_on = now(),
+        state = '${JOB_STATES.completed}',
+        output = $3::jsonb
+      WHERE name = $1
+        AND id IN (SELECT UNNEST($2::uuid[]))
+        AND ${stateFilter}
+      RETURNING *
     )
-    SELECT COUNT(*) FROM completed
+    SELECT COUNT(*) FROM results
   `
 }
 
